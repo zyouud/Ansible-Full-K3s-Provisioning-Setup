@@ -1,0 +1,13 @@
+generate_vault_files: true
+apply_vault: true
+init_unseal_vault: true
+reset_vault_data: false
+
+ns_vault: vault
+server_tools_root_dir: /root/tools
+vault_keys_output_file_server: "{{ server_tools_root_dir }}/vault/vault-keys.json"
+
+vault_nodeport: 30200
+vault_image: "hashicorp/vault:1.21"
+vault_hostpath_data: "/opt/vault/data"
+vault_root_token_override: ""

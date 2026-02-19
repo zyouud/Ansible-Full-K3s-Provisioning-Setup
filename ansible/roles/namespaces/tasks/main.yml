@@ -1,0 +1,39 @@
+- name: Create namespace tools
+  command: "kubectl create namespace {{ ns_tools }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: ns_tools_out
+  changed_when: "'created' in (ns_tools_out.stdout | lower)"
+  failed_when: false
+
+- name: Create namespace monitoring
+  command: "kubectl create namespace {{ ns_monitoring }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: ns_mon_out
+  changed_when: "'created' in (ns_mon_out.stdout | lower)"
+  failed_when: false
+
+- name: Create namespace vault
+  command: "kubectl create namespace {{ ns_vault }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: ns_vault_out
+  changed_when: "'created' in (ns_vault_out.stdout | lower)"
+  failed_when: false
+
+- name: Create namespace frontend
+  command: "kubectl create namespace {{ ns_frontend }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: ns_fe_out
+  changed_when: "'created' in (ns_fe_out.stdout | lower)"
+  failed_when: false
+
+- name: Create namespace backend
+  command: "kubectl create namespace {{ ns_backend }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: ns_be_out
+  changed_when: "'created' in (ns_be_out.stdout | lower)"
+  failed_when: false

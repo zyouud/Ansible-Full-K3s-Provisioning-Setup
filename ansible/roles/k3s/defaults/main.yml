@@ -1,0 +1,2 @@
+# Safe defaults (prevents "undefined" errors)
+install_k3s: true

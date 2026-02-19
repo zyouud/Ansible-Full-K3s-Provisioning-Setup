@@ -1,0 +1,7 @@
+create_namespaces: true
+
+ns_tools: tools
+ns_monitoring: monitoring
+ns_vault: vault
+ns_frontend: frontend
+ns_backend: backend

@@ -1,0 +1,93 @@
+# ============================================================
+# Feature flags (true/false) - CONTROL EVERYTHING FROM HERE
+# ============================================================
+
+# Core provisioning
+install_k3s: true
+install_cert_manager: true
+create_namespaces: true
+
+# Generate /root/tools directory tree (base)
+generate_tools_root: true
+
+# --- Tools stack YAML generation (FILES ONLY, NO kubectl apply) ---
+generate_postgres_files: true
+generate_redis_files: true
+generate_kafka_files: true
+generate_mongodb_files: true
+
+# Vault (K8s in vault namespace)
+generate_vault_files: true      # creates vault YAMLs + vault-keys.json on SERVER (when init runs)
+apply_vault: true               # applies vault config/deploy/service ONLY
+init_unseal_vault: true         # initializes + unseals automatically (stores keys on server)
+
+# DANGEROUS: If Vault is initialized+sealed AND keys file missing, this wipes /opt/vault/data then re-inits
+reset_vault_data: false
+
+# Vault extra resources (files)
+generate_vault_rbac_files: true
+generate_vault_root_token_secret_file: true
+generate_vault_fetch_file: true
+
+# Apply extras automatically? (default false to let you edit/apply later)
+apply_vault_rbac: true
+apply_vault_root_token_secret: false
+apply_vault_fetch: false
+
+# ============================================================
+# Namespaces (NO -dev)
+# ============================================================
+ns_tools: tools
+ns_monitoring: monitoring
+ns_vault: vault
+ns_frontend: frontend
+ns_backend: backend
+
+# ============================================================
+# Server paths
+# ============================================================
+server_tools_root_dir: /root/tools
+
+# Vault keys stored on SERVER (structured/prettified)
+vault_keys_output_file_server: "{{ server_tools_root_dir }}/vault/vault-keys.json"
+
+# ============================================================
+# Kafka settings (NodePort + advertised host)
+# ============================================================
+kafka_nodeport: 30094
+
+# ============================================================
+# Postgres (ONLY ONE INSTANCE)
+# ============================================================
+postgres_name: assets-db
+postgres_db: assets_db
+postgres_user: assets_u
+postgres_password: Assets-667.766
+postgres_service_port: 5440
+postgres_nodeport: 30440
+postgres_storage: 10Gi
+
+# ============================================================
+# Redis (ONLY ONE INSTANCE)
+# ============================================================
+redis_name: redis-assets
+redis_service_port: 6390
+redis_storage: 5Gi
+
+# ============================================================
+# MongoDB
+# ============================================================
+mongodb_root_user: vllm
+mongodb_root_password: vllmroot123987
+mongodb_storage: 100Mi
+mongodb_service_port: 27019
+
+# ============================================================
+# Vault
+# ============================================================
+vault_nodeport: 30200
+vault_image: "hashicorp/vault:1.21"
+vault_hostpath_data: "/opt/vault/data"
+
+# Optional: hardcode root token (otherwise pulled from vault-keys.json)
+vault_root_token_override: ""

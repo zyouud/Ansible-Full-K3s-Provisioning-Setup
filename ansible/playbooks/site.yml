@@ -1,0 +1,20 @@
+- name: Provision K3s server and generate Kubernetes manifests
+  hosts: k3s_servers
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: k3s
+      when: install_k3s | bool
+
+    - role: cert_manager
+      when: install_cert_manager | bool
+
+    - role: namespaces
+      when: create_namespaces | bool
+
+    - role: generate_tools_files
+      when: generate_tools_root | bool
+
+    - role: vault
+      when: generate_vault_files | bool

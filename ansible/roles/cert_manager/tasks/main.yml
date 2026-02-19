@@ -1,0 +1,16 @@
+- name: Install cert-manager (official release YAML)
+  command: "kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Verify cert-manager pods are ready (get pods)
+  command: "kubectl get pods -n cert-manager"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: certmgr_pods
+  changed_when: false
+  failed_when: false
+
+- name: Print cert-manager pods
+  debug:
+    var: certmgr_pods.stdout_lines

@@ -1,0 +1,673 @@
+# ============================================================
+# /root/tools base
+# ============================================================
+- name: Ensure /root/tools exists
+  file:
+    path: "{{ server_tools_root_dir }}"
+    state: directory
+    mode: "0755"
+  when: generate_tools_root | bool
+
+# Create subdirs ONLY if their tool flag is enabled
+- name: Ensure postgres dir exists
+  file:
+    path: "{{ server_tools_root_dir }}/postgres"
+    state: directory
+    mode: "0755"
+  when: generate_postgres_files | bool
+
+- name: Ensure redis dir exists
+  file:
+    path: "{{ server_tools_root_dir }}/redis"
+    state: directory
+    mode: "0755"
+  when: generate_redis_files | bool
+
+- name: Ensure kafka dir exists
+  file:
+    path: "{{ server_tools_root_dir }}/kafka"
+    state: directory
+    mode: "0755"
+  when: generate_kafka_files | bool
+
+- name: Ensure mongodb dir exists
+  file:
+    path: "{{ server_tools_root_dir }}/mongodb"
+    state: directory
+    mode: "0755"
+  when: generate_mongodb_files | bool
+
+# ============================================================
+# Postgres (ONE instance) - FILES ONLY
+# ============================================================
+- name: Write postgres-pvc.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/postgres/postgres-pvc.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: {{ postgres_name }}-data
+        namespace: {{ ns_tools }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ postgres_storage }}
+  when: generate_postgres_files | bool
+
+- name: Write postgres-deployment.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/postgres/postgres-deployment.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: {{ postgres_name }}
+        namespace: {{ ns_tools }}
+      spec:
+        replicas: 1
+        strategy:
+          type: Recreate
+        selector:
+          matchLabels:
+            app: {{ postgres_name }}
+        template:
+          metadata:
+            labels:
+              app: {{ postgres_name }}
+          spec:
+            containers:
+              - name: postgres
+                image: postgres:16
+                ports:
+                  - containerPort: 5432
+                env:
+                  - name: POSTGRES_DB
+                    value: {{ postgres_db }}
+                  - name: POSTGRES_USER
+                    value: {{ postgres_user }}
+                  - name: POSTGRES_PASSWORD
+                    value: {{ postgres_password }}
+                volumeMounts:
+                  - name: data
+                    mountPath: /var/lib/postgresql/data
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: {{ postgres_name }}-data
+  when: generate_postgres_files | bool
+
+- name: Write postgres-service.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/postgres/postgres-service.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ postgres_name }}
+        namespace: {{ ns_tools }}
+      spec:
+        type: NodePort
+        selector:
+          app: {{ postgres_name }}
+        ports:
+          - port: {{ postgres_service_port }}
+            targetPort: 5432
+            nodePort: {{ postgres_nodeport }}
+  when: generate_postgres_files | bool
+
+# ============================================================
+# Redis (ONE instance) - FILES ONLY
+# ============================================================
+- name: Write redis-pvc.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/redis/redis-pvc.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: {{ redis_name }}-data
+        namespace: {{ ns_tools }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ redis_storage }}
+  when: generate_redis_files | bool
+
+- name: Write redis-deployment.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/redis/redis-deployment.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: {{ redis_name }}
+        namespace: {{ ns_tools }}
+      spec:
+        replicas: 1
+        strategy:
+          type: Recreate
+        selector:
+          matchLabels:
+            app: {{ redis_name }}
+        template:
+          metadata:
+            labels:
+              app: {{ redis_name }}
+          spec:
+            containers:
+              - name: redis
+                image: redis:7
+                ports:
+                  - containerPort: 6379
+                volumeMounts:
+                  - name: data
+                    mountPath: /data
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: {{ redis_name }}-data
+  when: generate_redis_files | bool
+
+- name: Write redis-service.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/redis/redis-service.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: {{ redis_name }}
+        namespace: {{ ns_tools }}
+      spec:
+        selector:
+          app: {{ redis_name }}
+        ports:
+          - port: {{ redis_service_port }}
+            targetPort: 6379
+  when: generate_redis_files | bool
+
+# ============================================================
+# MongoDB - FILES ONLY
+# ============================================================
+- name: Write mongodb-pvc.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/mongodb/mongodb-pvc.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: mongodata
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: mongodata
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ mongodb_storage }}
+  when: generate_mongodb_files | bool
+
+- name: Write mongodb-deployment.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/mongodb/mongodb-deployment.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: mongodb
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: mongodb
+      spec:
+        replicas: 1
+        strategy:
+          type: Recreate
+        selector:
+          matchLabels:
+            io.kompose.service: mongodb
+        template:
+          metadata:
+            labels:
+              io.kompose.service: mongodb
+          spec:
+            containers:
+              - name: mongodb-vllm
+                image: mongo:6
+                ports:
+                  - containerPort: 27017
+                env:
+                  - name: MONGO_INITDB_ROOT_PASSWORD
+                    value: {{ mongodb_root_password }}
+                  - name: MONGO_INITDB_ROOT_USERNAME
+                    value: {{ mongodb_root_user }}
+                volumeMounts:
+                  - mountPath: /data/db
+                    name: mongodata
+            volumes:
+              - name: mongodata
+                persistentVolumeClaim:
+                  claimName: mongodata
+  when: generate_mongodb_files | bool
+
+- name: Write mongodb-service.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/mongodb/mongodb-service.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: mongodb
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: mongodb
+      spec:
+        ports:
+          - name: "27019"
+            port: {{ mongodb_service_port }}
+            targetPort: 27017
+        selector:
+          io.kompose.service: mongodb
+  when: generate_mongodb_files | bool
+
+# ============================================================
+# Kafka stack - FILES ONLY
+# ============================================================
+- name: Write kafka-pvcs.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/kafka/kafka-pvcs.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: connect-claim0
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: connect-claim0
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+      ---
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: kafka-data
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: kafka-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+      ---
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: zk-data
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: zk-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+      ---
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: zk-txns-logs
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: zk-txns-logs
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+  when: generate_kafka_files | bool
+
+- name: Write kafka-deployments.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/kafka/kafka-deployments.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: connect
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: connect
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            io.kompose.service: connect
+        strategy:
+          type: Recreate
+        template:
+          metadata:
+            labels:
+              io.kompose.service: connect
+          spec:
+            containers:
+              - name: connect
+                image: confluentinc/cp-kafka-connect:7.6.1
+                env:
+                  - name: CONNECT_BOOTSTRAP_SERVERS
+                    value: kafka.tools.svc.cluster.local:9092
+                  - name: CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR
+                    value: "1"
+                  - name: CONNECT_CONFIG_STORAGE_TOPIC
+                    value: connect-configs
+                  - name: CONNECT_GROUP_ID
+                    value: compose-connect-group
+                  - name: CONNECT_INTERNAL_KEY_CONVERTER
+                    value: org.apache.kafka.connect.json.JsonConverter
+                  - name: CONNECT_INTERNAL_VALUE_CONVERTER
+                    value: org.apache.kafka.connect.json.JsonConverter
+                  - name: CONNECT_KEY_CONVERTER
+                    value: org.apache.kafka.connect.storage.StringConverter
+                  - name: CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR
+                    value: "1"
+                  - name: CONNECT_OFFSET_STORAGE_TOPIC
+                    value: connect-offsets
+                  - name: CONNECT_PLUGIN_PATH
+                    value: /usr/share/java,/etc/kafka-connect/jars
+                  - name: CONNECT_REST_ADVERTISED_HOST_NAME
+                    value: connect
+                  - name: CONNECT_REST_PORT
+                    value: "8083"
+                  - name: CONNECT_STATUS_STORAGE_REPLICATION_FACTOR
+                    value: "1"
+                  - name: CONNECT_STATUS_STORAGE_TOPIC
+                    value: connect-status
+                  - name: CONNECT_VALUE_CONVERTER
+                    value: org.apache.kafka.connect.storage.StringConverter
+                ports:
+                  - containerPort: 8083
+                volumeMounts:
+                  - mountPath: /etc/kafka-connect/jars
+                    name: connect-claim0
+            restartPolicy: Always
+            volumes:
+              - name: connect-claim0
+                persistentVolumeClaim:
+                  claimName: connect-claim0
+      ---
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: kafka
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: kafka
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            io.kompose.service: kafka
+        strategy:
+          type: Recreate
+        template:
+          metadata:
+            labels:
+              io.kompose.service: kafka
+          spec:
+            securityContext:
+              fsGroup: 1000
+            containers:
+              - name: kafka
+                image: confluentinc/cp-kafka:7.6.1
+                env:
+                  - name: KAFKA_ADVERTISED_LISTENERS
+                    value: "PLAINTEXT://kafka.tools.svc.cluster.local:9092,PLAINTEXT_HOST://{{ ansible_default_ipv4.address }}:{{ kafka_nodeport }}"
+                  - name: KAFKA_BROKER_ID
+                    value: "1"
+                  - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+                    value: "0"
+                  - name: KAFKA_INTER_BROKER_LISTENER_NAME
+                    value: PLAINTEXT
+                  - name: KAFKA_LISTENERS
+                    value: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:9094
+                  - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+                    value: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+                  - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+                    value: "1"
+                  - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+                    value: "1"
+                  - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+                    value: "1"
+                  - name: KAFKA_ZOOKEEPER_CONNECT
+                    value: zookeeper.tools.svc.cluster.local:2181
+                  - name: KAFKA_PORT
+                    value: ""
+                ports:
+                  - containerPort: 9092
+                  - containerPort: 9094
+                volumeMounts:
+                  - mountPath: /var/lib/kafka/data
+                    name: kafka-data
+            restartPolicy: Always
+            volumes:
+              - name: kafka-data
+                persistentVolumeClaim:
+                  claimName: kafka-data
+      ---
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: kafka-ui
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: kafka-ui
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            io.kompose.service: kafka-ui
+        template:
+          metadata:
+            labels:
+              io.kompose.service: kafka-ui
+          spec:
+            containers:
+              - name: kafka-ui
+                image: provectuslabs/kafka-ui:v0.7.2
+                env:
+                  - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+                    value: kafka.tools.svc.cluster.local:9092
+                  - name: KAFKA_CLUSTERS_0_NAME
+                    value: local
+                  - name: KAFKA_CLUSTERS_0_SCHEMAREGISTRY
+                    value: http://schema-registry.tools.svc.cluster.local:8081
+                  - name: KAFKA_CLUSTERS_0_ZOOKEEPER
+                    value: zookeeper.tools.svc.cluster.local:2181
+                ports:
+                  - containerPort: 8080
+            restartPolicy: Always
+      ---
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: schema-registry
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: schema-registry
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            io.kompose.service: schema-registry
+        template:
+          metadata:
+            labels:
+              io.kompose.service: schema-registry
+          spec:
+            containers:
+              - name: schema-registry
+                image: confluentinc/cp-schema-registry:7.6.1
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    unset SCHEMA_REGISTRY_PORT
+                    /etc/confluent/docker/run
+                env:
+                  - name: SCHEMA_REGISTRY_HOST_NAME
+                    value: schema-registry
+                  - name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS
+                    value: PLAINTEXT://kafka.tools.svc.cluster.local:9092
+                  - name: SCHEMA_REGISTRY_LISTENERS
+                    value: http://0.0.0.0:8081
+                ports:
+                  - containerPort: 8081
+            restartPolicy: Always
+      ---
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: zookeeper
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: zookeeper
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            io.kompose.service: zookeeper
+        strategy:
+          type: Recreate
+        template:
+          metadata:
+            labels:
+              io.kompose.service: zookeeper
+          spec:
+            containers:
+              - name: zookeeper
+                image: confluentinc/cp-zookeeper:7.6.1
+                env:
+                  - name: ZOOKEEPER_CLIENT_PORT
+                    value: "2181"
+                  - name: ZOOKEEPER_TICK_TIME
+                    value: "2000"
+                ports:
+                  - containerPort: 2181
+                volumeMounts:
+                  - mountPath: /var/lib/zookeeper/data
+                    name: zk-data
+                  - mountPath: /var/lib/zookeeper/log
+                    name: zk-txns-logs
+            restartPolicy: Always
+            volumes:
+              - name: zk-data
+                persistentVolumeClaim:
+                  claimName: zk-data
+              - name: zk-txns-logs
+                persistentVolumeClaim:
+                  claimName: zk-txns-logs
+  when: generate_kafka_files | bool
+
+- name: Write kafka-services.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/kafka/kafka-services.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: connect
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: connect
+      spec:
+        ports:
+          - port: 8083
+            targetPort: 8083
+        selector:
+          io.kompose.service: connect
+      ---
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: kafka
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: kafka
+      spec:
+        type: NodePort
+        ports:
+          - port: 9092
+            targetPort: 9092
+          - port: 9094
+            targetPort: 9094
+            nodePort: {{ kafka_nodeport }}
+        selector:
+          io.kompose.service: kafka
+      ---
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: kafka-ui
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: kafka-ui
+      spec:
+        type: NodePort
+        ports:
+          - port: 8082
+            targetPort: 8080
+            nodePort: 30095
+        selector:
+          io.kompose.service: kafka-ui
+      ---
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: schema-registry
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: schema-registry
+      spec:
+        ports:
+          - port: 8081
+            targetPort: 8081
+        selector:
+          io.kompose.service: schema-registry
+      ---
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: zookeeper
+        namespace: {{ ns_tools }}
+        labels:
+          io.kompose.service: zookeeper
+      spec:
+        ports:
+          - port: 2181
+            targetPort: 2181
+        selector:
+          io.kompose.service: zookeeper
+  when: generate_kafka_files | bool

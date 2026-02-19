@@ -1,0 +1,375 @@
+- name: Ensure vault dir exists on server
+  file:
+    path: "{{ server_tools_root_dir }}/vault"
+    state: directory
+    mode: "0755"
+
+# -------------------------
+# Write Vault manifests
+# -------------------------
+- name: Write vault-config.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/vault/vault-config.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: vault-config
+        namespace: {{ ns_vault }}
+      data:
+        config.hcl: |
+          storage "file" {
+            path = "/vault/data"
+          }
+          listener "tcp" {
+            address = "0.0.0.0:8200"
+            tls_disable = true
+          }
+          api_addr     = "http://0.0.0.0:8200/"
+          cluster_addr = "http://0.0.0.0:8201/"
+          ui = true
+
+- name: Write vault-deployment.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/vault/vault-deployment.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: vault
+        namespace: {{ ns_vault }}
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: vault
+        template:
+          metadata:
+            labels:
+              app: vault
+          spec:
+            containers:
+              - name: vault
+                image: {{ vault_image }}
+                ports:
+                  - containerPort: 8200
+                command: ["/bin/sh", "-c"]
+                args:
+                  - exec vault server -config=/vault/config/config.hcl
+                env:
+                  - name: SKIP_CHOWN
+                    value: "true"
+                  - name: VAULT_ADDR
+                    value: "http://127.0.0.1:8200/"
+                  - name: VAULT_API_ADDR
+                    value: "http://127.0.0.1:8200/"
+                  - name: VAULT_CLUSTER_ADDR
+                    value: "http://0.0.0.0:8201/"
+                volumeMounts:
+                  - name: config
+                    mountPath: /vault/config
+                    readOnly: true
+                  - name: data
+                    mountPath: /vault/data
+                securityContext:
+                  capabilities:
+                    add: ["IPC_LOCK"]
+            volumes:
+              - name: config
+                configMap:
+                  name: vault-config
+              - name: data
+                hostPath:
+                  path: {{ vault_hostpath_data }}
+                  type: DirectoryOrCreate
+
+- name: Write vault-service.yaml
+  copy:
+    dest: "{{ server_tools_root_dir }}/vault/vault-service.yaml"
+    mode: "0644"
+    content: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: vault
+        namespace: {{ ns_vault }}
+      spec:
+        type: NodePort
+        selector:
+          app: vault
+        ports:
+          - name: http
+            port: 8200
+            targetPort: 8200
+            nodePort: {{ vault_nodeport }}
+
+# -------------------------
+# Apply Vault (Option A)
+# -------------------------
+- name: Apply vault-config.yaml
+  command: "kubectl apply -f {{ server_tools_root_dir }}/vault/vault-config.yaml"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  when: apply_vault | bool
+
+- name: Apply vault-deployment.yaml
+  command: "kubectl apply -f {{ server_tools_root_dir }}/vault/vault-deployment.yaml"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  when: apply_vault | bool
+
+- name: Apply vault-service.yaml
+  command: "kubectl apply -f {{ server_tools_root_dir }}/vault/vault-service.yaml"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  when: apply_vault | bool
+
+# -------------------------
+# Detect Vault state
+# -------------------------
+- name: Wait for Vault pod to be Ready (only when init/unseal enabled)
+  shell: |
+    set -e
+    kubectl wait --for=condition=Ready pod -l app=vault -n {{ ns_vault }} --timeout=180s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  when: init_unseal_vault | bool
+
+- name: Vault status (json)
+  shell: |
+    set -e
+    POD="$(kubectl get pods -n {{ ns_vault }} -l app=vault -o jsonpath='{.items[0].metadata.name}')"
+    kubectl exec -n {{ ns_vault }} "$POD" -- sh -c 'vault status -format=json'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: vault_status_json
+  changed_when: false
+  failed_when: false
+  when: init_unseal_vault | bool
+
+- name: Set vault state facts (jq)  # /bin/sh compatible
+  shell: |
+    set -eu
+    echo '{{ vault_status_json.stdout | default("{}") }}' | jq -r '
+      "vault_is_initialized=\(.initialized // false)\n" +
+      "vault_is_sealed=\(.sealed // true)\n"
+    '
+  register: vault_state_vars
+  changed_when: false
+  when: init_unseal_vault | bool
+
+- name: Apply vault state facts
+  set_fact:
+    vault_is_initialized: "{{ (vault_state_vars.stdout_lines | select('match','^vault_is_initialized=') | list | first).split('=')[1] | lower == 'true' }}"
+    vault_is_sealed: "{{ (vault_state_vars.stdout_lines | select('match','^vault_is_sealed=') | list | first).split('=')[1] | lower == 'true' }}"
+  when: init_unseal_vault | bool
+
+# -------------------------
+# Optional RESET (only if enabled AND keys file missing AND vault is initialized+sealed)
+# -------------------------
+- name: Check if server vault-keys.json exists
+  stat:
+    path: "{{ vault_keys_output_file_server }}"
+  register: vault_keys_server_stat
+  when: init_unseal_vault | bool
+
+- name: Reset Vault data (DANGEROUS) - scale down
+  shell: |
+    set -e
+    kubectl -n {{ ns_vault }} scale deployment vault --replicas=0
+    kubectl -n {{ ns_vault }} wait --for=delete pod -l app=vault --timeout=180s || true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  when:
+    - reset_vault_data | bool
+    - init_unseal_vault | bool
+    - vault_is_initialized
+    - vault_is_sealed
+    - not vault_keys_server_stat.stat.exists
+
+- name: Reset Vault data (DANGEROUS) - wipe hostPath storage
+  shell: |
+    set -e
+    rm -rf "{{ vault_hostpath_data }}"
+    mkdir -p "{{ vault_hostpath_data }}"
+  when:
+    - reset_vault_data | bool
+    - init_unseal_vault | bool
+    - vault_is_initialized
+    - vault_is_sealed
+    - not vault_keys_server_stat.stat.exists
+
+- name: Reset Vault data (DANGEROUS) - scale up
+  shell: |
+    set -e
+    kubectl -n {{ ns_vault }} scale deployment vault --replicas=1
+    kubectl wait --for=condition=Ready pod -l app=vault -n {{ ns_vault }} --timeout=180s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  when:
+    - reset_vault_data | bool
+    - init_unseal_vault | bool
+    - vault_is_initialized
+    - vault_is_sealed
+    - not vault_keys_server_stat.stat.exists
+
+# Re-check status after reset (so init will run)
+- name: Vault status (json) after optional reset
+  shell: |
+    set -e
+    POD="$(kubectl get pods -n {{ ns_vault }} -l app=vault -o jsonpath='{.items[0].metadata.name}')"
+    kubectl exec -n {{ ns_vault }} "$POD" -- sh -c 'vault status -format=json'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: vault_status_json2
+  changed_when: false
+  failed_when: false
+  when:
+    - init_unseal_vault | bool
+    - reset_vault_data | bool
+
+- name: Apply vault state facts after optional reset
+  shell: |
+    set -eu
+    echo '{{ vault_status_json2.stdout | default("{}") }}' | jq -r '
+      "vault_is_initialized=\(.initialized // false)\n" +
+      "vault_is_sealed=\(.sealed // true)\n"
+    '
+  register: vault_state_vars2
+  changed_when: false
+  when:
+    - init_unseal_vault | bool
+    - reset_vault_data | bool
+
+- name: Set facts after optional reset
+  set_fact:
+    vault_is_initialized: "{{ (vault_state_vars2.stdout_lines | select('match','^vault_is_initialized=') | list | first).split('=')[1] | lower == 'true' }}"
+    vault_is_sealed: "{{ (vault_state_vars2.stdout_lines | select('match','^vault_is_sealed=') | list | first).split('=')[1] | lower == 'true' }}"
+  when:
+    - init_unseal_vault | bool
+    - reset_vault_data | bool
+
+# -------------------------
+# Init (only if NOT initialized) -> write keys ON SERVER (structured)
+# -------------------------
+- name: Vault operator init (json)
+  shell: |
+    set -e
+    POD="$(kubectl get pods -n {{ ns_vault }} -l app=vault -o jsonpath='{.items[0].metadata.name}')"
+    kubectl exec -n {{ ns_vault }} "$POD" -- sh -c 'vault operator init -format=json'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: vault_init_json
+  changed_when: false
+  failed_when: false
+  when:
+    - init_unseal_vault | bool
+    - not vault_is_initialized
+
+- name: Save vault-keys.json ON SERVER (raw)
+  copy:
+    dest: "{{ vault_keys_output_file_server }}"
+    content: "{{ vault_init_json.stdout }}"
+    mode: "0600"
+  when:
+    - init_unseal_vault | bool
+    - not vault_is_initialized
+    - vault_init_json.rc == 0
+    - (vault_init_json.stdout | length) > 0
+
+- name: Pretty-format vault-keys.json ON SERVER (jq)
+  shell: |
+    set -e
+    if [ -f "{{ vault_keys_output_file_server }}" ]; then
+      tmp="$(mktemp)"
+      jq '.' "{{ vault_keys_output_file_server }}" > "$tmp"
+      cat "$tmp" > "{{ vault_keys_output_file_server }}"
+      rm -f "$tmp"
+      chmod 600 "{{ vault_keys_output_file_server }}"
+    fi
+  when: init_unseal_vault | bool
+
+# -------------------------
+# Unseal (only if sealed) -> read keys FROM SERVER
+# -------------------------
+- name: Re-stat server vault-keys.json
+  stat:
+    path: "{{ vault_keys_output_file_server }}"
+  register: vault_keys_server_stat2
+  when:
+    - init_unseal_vault | bool
+    - vault_is_sealed
+
+- name: Fail if Vault is sealed but server keys file is missing
+  fail:
+    msg: "Vault is initialized+sealed but {{ vault_keys_output_file_server }} is missing. Set reset_vault_data=true OR restore original keys."
+  when:
+    - init_unseal_vault | bool
+    - vault_is_sealed
+    - not vault_keys_server_stat2.stat.exists
+
+- name: Extract unseal keys + root token from server file (jq)
+  shell: |
+    set -eu
+    jq -r '
+      "k1=\(.unseal_keys_b64[0])\n" +
+      "k2=\(.unseal_keys_b64[1])\n" +
+      "k3=\(.unseal_keys_b64[2])\n" +
+      "root=\(.root_token)\n"
+    ' "{{ vault_keys_output_file_server }}"
+  register: vault_parsed_kv
+  changed_when: false
+  when:
+    - init_unseal_vault | bool
+    - vault_is_sealed
+
+- name: Set unseal facts
+  set_fact:
+    vault_unseal_key_1: "{{ (vault_parsed_kv.stdout_lines | select('match','^k1=') | list | first).split('=')[1] }}"
+    vault_unseal_key_2: "{{ (vault_parsed_kv.stdout_lines | select('match','^k2=') | list | first).split('=')[1] }}"
+    vault_unseal_key_3: "{{ (vault_parsed_kv.stdout_lines | select('match','^k3=') | list | first).split('=')[1] }}"
+    vault_root_token:   "{{ (vault_parsed_kv.stdout_lines | select('match','^root=') | list | first).split('=')[1] }}"
+  when:
+    - init_unseal_vault | bool
+    - vault_is_sealed
+
+- name: Unseal Vault (key 1)
+  shell: |
+    set -e
+    POD="$(kubectl get pods -n {{ ns_vault }} -l app=vault -o jsonpath='{.items[0].metadata.name}')"
+    kubectl exec -n {{ ns_vault }} "$POD" -- sh -c 'vault operator unseal {{ vault_unseal_key_1 }}'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  failed_when: false
+  when:
+    - init_unseal_vault | bool
+    - vault_is_sealed
+
+- name: Unseal Vault (key 2)
+  shell: |
+    set -e
+    POD="$(kubectl get pods -n {{ ns_vault }} -l app=vault -o jsonpath='{.items[0].metadata.name}')"
+    kubectl exec -n {{ ns_vault }} "$POD" -- sh -c 'vault operator unseal {{ vault_unseal_key_2 }}'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  failed_when: false
+  when:
+    - init_unseal_vault | bool
+    - vault_is_sealed
+
+- name: Unseal Vault (key 3)
+  shell: |
+    set -e
+    POD="$(kubectl get pods -n {{ ns_vault }} -l app=vault -o jsonpath='{.items[0].metadata.name}')"
+    kubectl exec -n {{ ns_vault }} "$POD" -- sh -c 'vault operator unseal {{ vault_unseal_key_3 }}'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  failed_when: false
+  when:
+    - init_unseal_vault | bool
+    - vault_is_sealed

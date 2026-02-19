@@ -1,0 +1,59 @@
+- name: Install K3s (Traefik included by default)
+  shell: "curl -sfL https://get.k3s.io | sh -"
+  args:
+    creates: /usr/local/bin/k3s
+
+- name: Check the K3s service (systemctl status)
+  command: "systemctl status k3s --no-pager"
+  register: k3s_status
+  changed_when: false
+
+- name: Print k3s service status
+  debug:
+    var: k3s_status.stdout_lines
+
+- name: Make kubectl usable without sudo (root kubeconfig)
+  file:
+    path: /root/.kube
+    state: directory
+    mode: "0755"
+
+- name: Copy k3s kubeconfig to /root/.kube/config
+  copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /root/.kube/config
+    remote_src: true
+    mode: "0600"
+
+- name: kubectl get nodes
+  command: "kubectl get nodes"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: kubectl_nodes
+  changed_when: false
+
+- name: Print nodes
+  debug:
+    var: kubectl_nodes.stdout_lines
+
+- name: Validate Traefik exists (pods)
+  shell: "kubectl get pods -n kube-system | grep -i traefik"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: traefik_pods
+  changed_when: false
+  failed_when: false
+
+- name: Validate Traefik exists (svc)
+  shell: "kubectl get svc -n kube-system | grep -i traefik"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: traefik_svcs
+  changed_when: false
+  failed_when: false
+
+- name: Print Traefik check results
+  debug:
+    msg:
+      - "Traefik pods:\n{{ traefik_pods.stdout | default('') }}"
+      - "Traefik svcs:\n{{ traefik_svcs.stdout | default('') }}"
